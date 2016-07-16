@@ -1,88 +1,29 @@
 package main
 
 import (
+	"./types"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/joho/godotenv"
+	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 )
 
-type Access_token struct {
-	Access_token  string
-	Token_type    string
-	Expires_in    int
-	Scope         string
-	Refresh_token string
-	created       int64
-}
+var (
+	Info    *log.Logger
+	Warning *log.Logger
+	Error   *log.Logger
+)
 
-func get_token() (*Access_token, error) {
-	CLIENT_ID := os.Getenv("DEBBIE_CLIENT_ID")
-	CLIENT_SECRET := os.Getenv("DEBBIE_CLIENT_SECRET")
-	AUTH_URL := "https://www.reddit.com/api/v1/access_token"
-
-	client := &http.Client{}
-	data := url.Values{
-		"grant_type": {"password"},
-		"username":   {os.Getenv("DEBBIE_USERNAME")},
-		"password":   {os.Getenv("DEBBIE_PASSWORD")},
-	}
-
-	req, err := http.NewRequest("POST", AUTH_URL, bytes.NewBufferString((data.Encode())))
-	if err != nil {
-		return nil, err
-	}
-
-	req.SetBasicAuth(CLIENT_ID, CLIENT_SECRET)
-	req.Header.Set("User-Agent", "DebbieDownvotes/0.1 by laodicean")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	defer resp.Body.Close()
-
-	token := &Access_token{created: time.Now().Unix()}
-	err = json.NewDecoder(resp.Body).Decode(token)
-	if err != nil {
-		return nil, err
-	}
-
-	for k, v := range resp.Header {
-		fmt.Println(k, v)
-	}
-	fmt.Printf("\n token: %+v\n", token)
-
-	return token, nil
-}
-
-func get_hot(t *Access_token, subreddit string, limit string, count string) error {
-	client := &http.Client{}
-	data := url.Values{
-		"limit": {limit},
-		"count": {count},
-	}
-
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://oauth.reddit.com/r/%s/hot", subreddit), bytes.NewBufferString((data.Encode())))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "bearer "+t.Access_token)
-	req.Header.Set("User-Agent", "DebbieDownvotes/0.1 by laodicean")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	b, err := ioutil.ReadAll(resp.Body)
+func pprintResp(r io.Reader) error {
+	b, err := ioutil.ReadAll(r)
 	if err != nil {
 		return err
 	}
@@ -96,19 +37,172 @@ func get_hot(t *Access_token, subreddit string, limit string, count string) erro
 	return nil
 }
 
+// Retrieve an access token from redit given several credentials.
+func getToken() (*types.AccessToken, error) {
+	CLIENT_ID := os.Getenv("DEBBIE_CLIENT_ID")
+	CLIENT_SECRET := os.Getenv("DEBBIE_CLIENT_SECRET")
+	AUTH_URL := "https://www.reddit.com/api/v1/access_token"
+
+	data := url.Values{
+		"grant_type": {"password"},
+		"username":   {os.Getenv("DEBBIE_USERNAME")},
+		"password":   {os.Getenv("DEBBIE_PASSWORD")},
+	}
+
+	req, err := http.NewRequest("POST", AUTH_URL, bytes.NewBufferString((data.Encode())))
+	if err != nil {
+		return nil, err
+	}
+
+	req.SetBasicAuth(CLIENT_ID, CLIENT_SECRET)
+	req.Header.Set("User-Agent", "Debbie/0.1 by laodicean")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+
+	token := &types.AccessToken{Created: time.Now().Unix()}
+	err = json.NewDecoder(resp.Body).Decode(token)
+	if err != nil {
+		return nil, err
+	}
+
+	return token, nil
+}
+
+func getSubmissions(t *types.AccessToken, subreddit string, page string, limit int, count int) ([]types.Submission, error) {
+	data := url.Values{
+		"limit": {strconv.Itoa(limit)},
+		"count": {strconv.Itoa(count)},
+	}
+
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://oauth.reddit.com/r/%s/%s", subreddit, page)+"?"+data.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "bearer "+t.Access_token)
+	req.Header.Set("User-Agent", "Debbie/0.1 by laodicean")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	type Response struct {
+		Data struct {
+			Children []struct {
+				Data *types.Submission
+			}
+		}
+	}
+
+	r := &Response{}
+	err = json.NewDecoder(resp.Body).Decode(r)
+	if err != nil {
+		return nil, err
+	}
+
+	subs := make([]types.Submission, 0, limit)
+
+	for _, child := range r.Data.Children {
+		subs = append(subs, *child.Data)
+	}
+
+	return subs, nil
+}
+
+func getComments(t *types.AccessToken, sub *types.Submission) ([]*types.Comment, error) {
+	data := url.Values{
+		"context": {"0"},
+		"sort":    {"top"},
+	}
+
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://oauth.reddit.com/r/%s/comments/%s", sub.Subreddit, sub.Id)+"?"+data.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "bearer "+t.Access_token)
+	req.Header.Set("User-Agent", "Debbie/0.1 by laodicean")
+
+	Info.Println("requesting comments...")
+	resp, err := http.DefaultClient.Do(req)
+	Info.Println("done")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	type Response struct {
+		Data struct {
+			Children []struct {
+				Data *types.Comment
+			}
+		}
+	}
+
+	//pprintResp(resp.Body)
+	parts := &[2]Response{}
+
+	Info.Println("decoding comments...")
+	err = json.NewDecoder(resp.Body).Decode(parts)
+	if err != nil {
+		Warning.Println(err)
+	}
+	Info.Println("done")
+
+	comments := make([]*types.Comment, 0, 1000)
+
+	Info.Println("Number of top level comments: ", len(parts[1].Data.Children))
+	for _, child := range parts[1].Data.Children {
+		unpack_comment_replies(&comments, child.Data)
+	}
+	Info.Println("Total number of comments: ", len(comments))
+
+	return comments, nil
+}
+
+func unpack_comment_replies(comments *[]*types.Comment, parent *types.Comment) {
+	*comments = append(*comments, parent)
+	for _, reply := range parent.Replies.Data.Children {
+		unpack_comment_replies(comments, reply.Data)
+	}
+}
+
 func main() {
-	err := godotenv.Load()
-	if err != nil {
+	//create reader for readstring calls later on
+	//reader := bufio.NewReader(os.Stdin)
+	Info = log.New(os.Stderr, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+	Warning = log.New(os.Stderr, "Warning: ", log.Ldate|log.Ltime|log.Lshortfile)
+	Error = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
+
+	if err := godotenv.Load(); err != nil {
+		Error.Println(err)
 		panic(err)
 	}
 
-	token, err := get_token()
+	token, err := getToken()
 	if err != nil {
-		fmt.Println(err)
+		Error.Println(err)
+		panic(err)
 	}
 
-	err = get_hot(token, "all", "1", "0")
+	subs, err := getSubmissions(token, "all", "hot", 1, 0)
 	if err != nil {
-		panic(err)
+		Warning.Println(err)
+	}
+	Info.Println(subs[0])
+	comments, err := getComments(token, &subs[0])
+	if err != nil {
+		Warning.Println(err)
+	}
+	for _, comment := range comments {
+		if comment.Score < 0 {
+			Info.Println(comment)
+		}
 	}
 }
