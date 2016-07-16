@@ -15,15 +15,17 @@ type Submission struct {
 	Num_comments int
 	Subreddit    string
 	Created      float64
+	Permalink    string
+	Title        string
 }
 
 type Comment struct {
-	Subreddit_id string
-	Score        int32
-	Body         string
-	Name         string
-	Created      float64
-	Replies      struct {
+	Subreddit string
+	Score     int32
+	Body      string
+	Name      string
+	Created   float64
+	Replies   struct {
 		Data struct {
 			Children []struct {
 				Data *Comment

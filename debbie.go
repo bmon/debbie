@@ -119,7 +119,7 @@ func getSubmissions(t *types.AccessToken, subreddit string, page string, limit i
 func getComments(t *types.AccessToken, sub *types.Submission) ([]*types.Comment, error) {
 	data := url.Values{
 		"context": {"0"},
-		"sort":    {"top"},
+		"sort":    {"old"},
 	}
 
 	req, err := http.NewRequest("GET", fmt.Sprintf("https://oauth.reddit.com/r/%s/comments/%s", sub.Subreddit, sub.Id)+"?"+data.Encode(), nil)
@@ -129,9 +129,7 @@ func getComments(t *types.AccessToken, sub *types.Submission) ([]*types.Comment,
 	req.Header.Set("Authorization", "bearer "+t.Access_token)
 	req.Header.Set("User-Agent", "Debbie/0.1 by laodicean")
 
-	Info.Println("requesting comments...")
 	resp, err := http.DefaultClient.Do(req)
-	Info.Println("done")
 	if err != nil {
 		return nil, err
 	}
@@ -148,20 +146,19 @@ func getComments(t *types.AccessToken, sub *types.Submission) ([]*types.Comment,
 	//pprintResp(resp.Body)
 	parts := &[2]Response{}
 
-	Info.Println("decoding comments...")
 	err = json.NewDecoder(resp.Body).Decode(parts)
 	if err != nil {
-		Warning.Println(err)
+		// Supress errors when we try to unmarshal a "more comments" child
+		if _, ok := err.(*json.UnmarshalTypeError); !ok {
+			Warning.Println(err)
+		}
 	}
-	Info.Println("done")
 
 	comments := make([]*types.Comment, 0, 1000)
 
-	Info.Println("Number of top level comments: ", len(parts[1].Data.Children))
 	for _, child := range parts[1].Data.Children {
 		unpack_comment_replies(&comments, child.Data)
 	}
-	Info.Println("Total number of comments: ", len(comments))
 
 	return comments, nil
 }
@@ -191,18 +188,47 @@ func main() {
 		panic(err)
 	}
 
-	subs, err := getSubmissions(token, "all", "hot", 1, 0)
+	// We need to limit ourselves to 60 requests per second
+	networkSem := make(types.Semaphore, 60)
+	networkSem.P(60)
+
+	ticker := time.NewTicker(time.Second)
+	go func() {
+		for _ = range ticker.C {
+			networkSem.P(1)
+		}
+	}()
+
+	networkSem.V(1)
+	subs, err := getSubmissions(token, "all", "hot", 100, 0)
 	if err != nil {
-		Warning.Println(err)
+		Error.Println(err)
 	}
-	Info.Println(subs[0])
-	comments, err := getComments(token, &subs[0])
-	if err != nil {
-		Warning.Println(err)
-	}
-	for _, comment := range comments {
-		if comment.Score < 0 {
-			Info.Println(comment)
+
+	for _, sub := range subs {
+		Info.Println(sub)
+		subPrinted := false
+		networkSem.V(1)
+
+		comments, err := getComments(token, &sub)
+		if err != nil {
+			Error.Println(err)
+		}
+
+		for _, comment := range comments {
+			if comment.Score < -20 {
+				if !subPrinted {
+					fmt.Println("\n-----------")
+					fmt.Printf("%d - [%s] %s   (%s)\n", sub.Score, sub.Subreddit, sub.Title, sub.Permalink)
+					subPrinted = true
+				}
+
+				Info.Println("\n", comment.Score, time.Unix(int64(comment.Created), 0), comment.Subreddit, comment.Name, "\n", comment.Body)
+				fmt.Println(comment.Score, time.Unix(int64(comment.Created), 0), comment.Subreddit, comment.Name)
+				fmt.Println(comment.Body + "\n")
+			}
 		}
 	}
+
+	ticker.Stop()
 }
