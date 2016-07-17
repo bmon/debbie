@@ -21,16 +21,32 @@ type Submission struct {
 }
 
 type Comment struct {
-	Subreddit string
-	Score     int32
-	Body      string
-	Name      string
-	Created   float64
-	Replies   struct {
+	Submission *Submission
+	Id         string
+	Subreddit  string
+	Score      int32
+	Body       string
+	Name       string
+	Created    float64
+	Replies    struct {
 		Data struct {
 			Children []struct {
 				Data *Comment
 			}
 		}
 	}
+}
+
+type Comments []Comment
+
+func (slice Comments) Len() int {
+	return len(slice)
+}
+
+func (slice Comments) Less(i, j int) bool {
+	return slice[i].Score < slice[j].Score
+}
+
+func (slice Comments) Swap(i, j int) {
+	slice[i], slice[j] = slice[j], slice[i]
 }

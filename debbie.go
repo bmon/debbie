@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -203,8 +204,9 @@ func main() {
 
 	subs := []types.Submission{}
 	after := ""
-	Info.Println("Requesting 1000 hot submissions from /r/all")
-	for i := 0; i < 10; i++ {
+	pages := 100
+	Info.Println("Requesting", pages*100, "hot submissions from /r/all")
+	for i := 0; i < pages; i++ {
 		networkSem.V(1)
 		new_subs, err := getSubmissions(token, "all", "hot", 100, after)
 		if err != nil {
@@ -213,12 +215,13 @@ func main() {
 
 		subs = append(subs, new_subs...)
 		after = subs[len(subs)-1].Name
-		Info.Printf("%d%%\n", (i+1)*10)
+		Info.Printf("%d%%\n", (i+1)*(100/pages))
 	}
+
+	poor_comments := make(types.Comments, 0, 100)
 
 	for _, sub := range subs {
 		Info.Println(sub.Score, sub.Subreddit, sub.Title)
-		subPrinted := false
 		networkSem.V(1)
 
 		comments, err := getComments(token, &sub)
@@ -228,17 +231,20 @@ func main() {
 
 		for _, comment := range comments {
 			if comment.Score < -100 {
-				if !subPrinted {
-					fmt.Println("\n-----------")
-					fmt.Printf("%d - [%s] %s   (%s)\n", sub.Score, sub.Subreddit, sub.Title, sub.Permalink)
-					subPrinted = true
-				}
-
 				Info.Println("\n", comment.Score, time.Unix(int64(comment.Created), 0), comment.Subreddit, comment.Name, "\n", comment.Body)
-				fmt.Println(comment.Score, time.Unix(int64(comment.Created), 0), comment.Subreddit, comment.Name)
-				fmt.Println(comment.Body + "\n")
+				comment.Submission = &sub
+				poor_comments = append(poor_comments, *comment)
 			}
 		}
+	}
+
+	sort.Sort(poor_comments)
+
+	for _, pc := range poor_comments {
+		fmt.Println("--------------")
+		fmt.Printf("%d - [%s] %s   (%s)\n", pc.Submission.Score, pc.Submission.Subreddit, pc.Submission.Title, "https://np.reddit.com"+pc.Submission.Permalink+"/"+pc.Id)
+		fmt.Println(pc.Score, time.Unix(int64(pc.Created), 0), pc.Subreddit, pc.Name)
+		fmt.Println(pc.Body)
 	}
 
 	ticker.Stop()
