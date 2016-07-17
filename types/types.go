@@ -11,6 +11,7 @@ type AccessToken struct {
 
 type Submission struct {
 	Id           string
+	Name         string
 	Score        int32
 	Num_comments int
 	Subreddit    string

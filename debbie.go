@@ -73,10 +73,12 @@ func getToken() (*types.AccessToken, error) {
 	return token, nil
 }
 
-func getSubmissions(t *types.AccessToken, subreddit string, page string, limit int, count int) ([]types.Submission, error) {
+func getSubmissions(t *types.AccessToken, subreddit string, page string, limit int, after string) ([]types.Submission, error) {
 	data := url.Values{
 		"limit": {strconv.Itoa(limit)},
-		"count": {strconv.Itoa(count)},
+	}
+	if after != "" {
+		data.Add("after", after)
 	}
 
 	req, err := http.NewRequest("GET", fmt.Sprintf("https://oauth.reddit.com/r/%s/%s", subreddit, page)+"?"+data.Encode(), nil)
@@ -199,14 +201,23 @@ func main() {
 		}
 	}()
 
-	networkSem.V(1)
-	subs, err := getSubmissions(token, "all", "hot", 100, 0)
-	if err != nil {
-		Error.Println(err)
+	subs := []types.Submission{}
+	after := ""
+	Info.Println("Requesting 1000 hot submissions from /r/all")
+	for i := 0; i < 10; i++ {
+		networkSem.V(1)
+		new_subs, err := getSubmissions(token, "all", "hot", 100, after)
+		if err != nil {
+			Error.Println(err)
+		}
+
+		subs = append(subs, new_subs...)
+		after = subs[len(subs)-1].Name
+		Info.Printf("%d%%\n", (i+1)*10)
 	}
 
 	for _, sub := range subs {
-		Info.Println(sub)
+		Info.Println(sub.Score, sub.Subreddit, sub.Title)
 		subPrinted := false
 		networkSem.V(1)
 
@@ -216,7 +227,7 @@ func main() {
 		}
 
 		for _, comment := range comments {
-			if comment.Score < -20 {
+			if comment.Score < -100 {
 				if !subPrinted {
 					fmt.Println("\n-----------")
 					fmt.Printf("%d - [%s] %s   (%s)\n", sub.Score, sub.Subreddit, sub.Title, sub.Permalink)
