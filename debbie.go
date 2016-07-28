@@ -157,7 +157,7 @@ func getComments(t *types.AccessToken, sub *types.Submission) ([]*types.Comment,
 		}
 	}
 
-	comments := make([]*types.Comment, 0, 1000)
+	comments := make([]*types.Comment, 0, 500)
 
 	for _, child := range parts[1].Data.Children {
 		unpack_comment_replies(&comments, child.Data)
@@ -204,7 +204,7 @@ func main() {
 
 	subs := []types.Submission{}
 	after := ""
-	pages := 100
+	pages := 20
 	Info.Println("Requesting", pages*100, "hot submissions from /r/all")
 	for i := 0; i < pages; i++ {
 		networkSem.V(1)
@@ -232,7 +232,7 @@ func main() {
 		for _, comment := range comments {
 			if comment.Score < -100 {
 				Info.Println("\n", comment.Score, time.Unix(int64(comment.Created), 0), comment.Subreddit, comment.Name, "\n", comment.Body)
-				comment.Submission = &sub
+				comment.Submission = sub
 				poor_comments = append(poor_comments, *comment)
 			}
 		}
@@ -242,8 +242,8 @@ func main() {
 
 	for _, pc := range poor_comments {
 		fmt.Println("--------------")
-		fmt.Printf("%d - [%s] %s   (%s)\n", pc.Submission.Score, pc.Submission.Subreddit, pc.Submission.Title, "https://np.reddit.com"+pc.Submission.Permalink+"/"+pc.Id)
-		fmt.Println(pc.Score, time.Unix(int64(pc.Created), 0), pc.Subreddit, pc.Name)
+		fmt.Printf("%d [%s] %s\n", pc.Score, pc.Submission.Subreddit, pc.Submission.Title)
+		fmt.Println("https://np.reddit.com" + pc.Submission.Permalink + pc.Id + "?context=10")
 		fmt.Println(pc.Body)
 	}
 

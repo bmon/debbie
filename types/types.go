@@ -21,7 +21,7 @@ type Submission struct {
 }
 
 type Comment struct {
-	Submission *Submission
+	Submission Submission
 	Id         string
 	Subreddit  string
 	Score      int32
